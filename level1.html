@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Level 1: Year/Month Heatmap</title>
+    <script src="package/dist/d3.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@1.12.4/dist/jquery.min.js" integrity="sha384-nvAa0+6Qg9clwYCGGPpDQLVpLNn0fRaROjHqs13t4Ggj3Ez50XnGQqc/r8MhnRDZ" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous">
+</head>
+<body>
+<div class="yearMonthHeatmap container" id="window">
+    <div class="row page-header">
+        <div class="col-md-10">
+            <h1 class="text-center legendTitle" style="font-weight: lighter">Year/Month Heatmap</h1>
+        </div>
+        <div role="toggleDisplay" class="col-md-2 display-control">
+            <div>
+                <label class="radio" style="font-weight: normal">
+                    <input type="radio" name="temperature" id="max" checked/>Max temperature
+                </label>
+            </div>
+            <div>
+                <label class="radio" style="font-weight: normal">
+                    <input type="radio" name="temperature" id="min"/>Min temperature
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <svg class="row" id="mainsvg" width="1200" height = "700"> </svg>
+</div>
+</body>
+<script type="module">
+
+    import {Legend} from './color-legend.js'
+
+    //Initialize
+    const mainsvg = d3.select('#mainsvg');
+    let tooltip, mouseover, mouseleave;
+    let width = +mainsvg.attr('width');
+    let height = +mainsvg.attr('height');
+    let margin = {top:30, right: 60, bottom: 60, left:60};
+    let innerHeight = height - margin.top - margin.bottom;
+    let innerWidth = width - margin.left - margin.right;
+    let min_or_max = 'max_temperature';
+
+    const maingroup = mainsvg.append('g')
+        .attr('id','maingroup')
+        .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    const xValue = d => {
+        if (typeof(d) == "undefined") {return 0;}
+        return d['date'].getFullYear();
+    };
+    const yValue = d => {
+        if (typeof(d) == "undefined") {return 0;}
+        return d['date'].getMonth();
+    };
+
+    //Extract min temperature or max temperature
+    const colorValue = (d, type) => {
+        if (typeof(d) == "undefined") {return 0;}
+        return d[type];
+    };
+    let xScale,yScale,scaleColor;
+    let allYear;
+
+    //Format
+    let monthFormat = d3.timeFormat('%B');
+
+    //Render initialize
+    const renderInit = dat => {
+        //yAxis
+        yScale = d3.scaleBand()
+            .domain(d3.range(12))
+            .range([0, innerHeight])
+            .padding(0)
+            .round(true);
+        maingroup.append('g')
+            .call(d3.axisLeft(yScale).tickFormat(d => monthFormat(new Date().setMonth(d))))
+            .select('.domain').remove();
+
+        //xAxis
+        xScale = d3.scaleBand()
+            .domain(d3.range(allYear[0], allYear[allYear.length-1] + 1))
+            .range([0, innerWidth])
+            .padding(0)
+            .round(true);
+        maingroup.append('g')
+            .call(d3.axisTop(xScale))
+            .select('.domain').remove();
+
+        //ColorScale
+        let max = d3.extent(dat, d => colorValue(d, 'max_temperature'))[1];
+        let min = d3.extent(dat, d => colorValue(d, 'min_temperature'))[0];
+
+        if (min < 0) {
+            max = Math.max(-min, max);
+            scaleColor = d3.scaleDiverging([-max, 0, max], t => d3.interpolateRdBu(1 - t));
+        }
+        else {
+            scaleColor = d3.scaleSequential()
+                .domain([0, max])
+                .interpolator(t => d3.interpolateRdBu(1 - t));
+        }
+
+        //Legend
+        maingroup.append("g")
+            .attr('class', 'legend')
+            .attr('transform', `translate(0, ${10 + innerHeight})`)
+            .append(() => Legend(scaleColor, {title: "Temperature"}))
+            .selectAll('text').attr('font-weight', 'regular');
+
+        //Tooltip
+        tooltip = d3.select("#window")
+            .append('div')
+            .attr("class", "tooltip")
+            .style("opacity", 0)
+            .style("background-color", "#0d0d0d")
+            .style('color', "#ffffff")
+            .style("border-radius", "5px")
+            .style("padding", "8px");
+        mouseleave = function (event, d){
+            d3.select(this).transition().style("opacity", 1);
+            tooltip.transition().style("opacity", 0);
+        }
+
+    }
+
+    const renderUpdate = (dat, type) => {
+
+        //The content of tooltip is updating with data
+        mouseover = function (event, d){
+            d3.select(this).transition().style("opacity", 0.7);
+            tooltip.transition().style("opacity", 0.8);
+            tooltip.html(`Date: ${d.date.toDateString()}`+'<br>'+`${type}: ${d[type]}`)
+                .style('left', String(event.pageX - event.offsetX + +d3.select(this).attr('x') + 70) + 'px')
+                .style('top', String(event.pageY - event.offsetY + +d3.select(this).attr('y') + 100) + 'px');
+            // .style('left', String(event.pageX) + 'px')
+            // .style('top', String(event.pageY) + 'px');
+        }
+
+        maingroup.selectAll('rect').remove()
+
+        maingroup.selectAll('rect').data(dat, d=>d.date)
+            .join('rect')
+            .attr('x', d => xScale(d['date'].getFullYear()))
+            .attr('y', d => yScale(yValue(d)))
+            .attr('width',xScale.bandwidth())
+            .attr('height',yScale.bandwidth())
+            .attr("stroke", "#ffffff")
+            .attr("stroke-width", 1.1)
+            .attr('fill', d => scaleColor(colorValue(d, type)))
+            .on('mouseover',overmouse)
+            .on('mouseleave', mouseleave);
+
+    }
+
+    //Read data
+    const data = d3.csv('temperature_daily.csv');
+    data.then( data => {
+        allYear = new Set();
+        data.forEach(d => {
+            d['date'] = new Date(d['date']);
+            d['max_temperature'] = +d['max_temperature'];
+            d['min_temperature'] = +d['min_temperature'];
+            allYear.add(+d.date.getFullYear());
+        })
+        allYear = Array.from(allYear);
+        allYear = allYear.sort(function (a, b) {return a-b}); //new Date()2个参数指定年份和月份：
+
+        renderInit(data);
+
+        let sequence = [];
+        allYear.forEach(d => {
+            for (let i=0; i<12; i++) {sequence.push([])}
+        });
+        const baseYear = allYear[0];
+
+        data.forEach(d => {
+            sequence[ +((d.date.getFullYear() - baseYear)*12 + d.date.getMonth())].push(d);
+        })
+
+        //需要去空：发现数据不完整，2017年最后两个月数据undefined
+        sequence = sequence.filter(d => d.length !== 0)
+
+        //Take max_temperature as a example
+        const max_sequence = sequence.map(seq => {
+            seq.sort(function(a,b){return b.max_temperature - a.max_temperature});
+            return seq[0];
+        })
+
+        const min_sequence = sequence.map(seq => {
+            seq.sort(function(a,b){return a.min_temperature - b.min_temperature});
+            return seq[0];
+        })
+
+        renderUpdate(max_sequence, 'max_temperature');
+
+        //Bind click event
+        d3.selectAll('.display-control #max').on('click',function(){
+            renderUpdate(max_sequence, 'max_temperature');
+        });
+        d3.selectAll('.display-control #min').on('click',function(){
+            renderUpdate(min_sequence, 'min_temperature');
+        });
+
+    });
+
+    //Title
+    mainsvg.select(".legendTitle")
+        .attr("x", width/2)
+        .attr("y", margin.top/2);
+
+
+</script>
+
+</html>

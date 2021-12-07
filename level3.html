@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Level 1: Year/Month Heatmap</title>
+    <script src="package/dist/d3.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jquery@1.12.4/dist/jquery.min.js" integrity="sha384-nvAa0+6Qg9clwYCGGPpDQLVpLNn0fRaROjHqs13t4Ggj3Ez50XnGQqc/r8MhnRDZ" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous">
+</head>
+<body>
+<div class="container" id="window" style="width: 1440px">
+    <div class="row page-header">
+        <div class="col-md-12">
+            <h1 class="text-center legendTitle" style="font-weight: lighter">HKUST Coauthor</h1>
+        </div>
+    </div>
+    <svg class="row" id="mainsvg" height="800" width="1400">
+        <g id="leftsvg"> </g>
+        <g id="rightsvg"> </g>
+    </svg>
+</div>
+</body>
+<script type="module">
+
+    import {Legend} from './color-legend.js'
+
+    //Initialize
+    let margin = {top:30, right: 30, bottom: 40, left:30};
+    let width = +d3.select('#mainsvg').attr('width');
+    let tooltip, mouseover, mouseleave;
+
+    const leftsvg = d3.select('#leftsvg')
+                        .attr('width', 700)
+                        .attr('height', 700);
+    const rightsvg = d3.select('#rightsvg')
+                        .attr('width', 700)
+                        .attr('height', 700)
+                        .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    let leftWidth = +d3.select('#leftsvg').attr('width');
+    let rightWidth = +d3.select('#rightsvg').attr('width');
+    let leftHeight = +d3.select('#leftsvg').attr('height');
+    let rightHeight = +d3.select('#rightsvg').attr('height');
+
+    const graph = leftsvg
+                    .append('g')
+                    .attr('id','graph')
+                    .attr('transform', `translate(${margin.left}, 0)`);
+
+    const padding_top = 40
+
+    //Render initialize
+
+
+    const adjacency = (nodes, links) => {
+
+        const M = [];
+        for( let i of nodes){
+            for( let j of nodes){
+                if (+i.id === +j.id) {
+                    M.push({"source": i.id,"target": j.id, "co": 0});
+                    continue;
+                }
+                if (+i.id > +j.id) continue;
+
+                if (+i.id < +j.id){
+                    let m = {"source": i.id,"target": j.id, "co": 0}
+                    let n = links.filter(l => (l.source.id===m.source) && (l.target.id===m.target));
+                    m.co += n.length;
+                    n = links.filter(l => (l.source.id===m.target) && (l.target.id===m.source));
+                    m.co += n.length;
+                    M.push(m);
+                    M.push({"source": j.id, "target": i.id, "co": m.co});
+                }
+            }
+        }
+        return M
+    }
+
+    //Read data
+    const data = d3.json('HKUST_coauthor_graph.json');
+    data.then( data => {
+        //Extract the subgraph of CSE
+        const nodes = data.nodes.filter(n => (n['dept']==='CSE')&&(n['fullname'].length !== 0)).sort((a,b) => (+a.id)-(+b.id));
+        const N = nodes.map(n => +n.id);
+        const links = data.edges.filter(({source, target}) => N.find(d=> d===+source) && N.find(d=>d===+target));
+
+        // Graph
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink()
+                .id(d =>d.id)
+                .links(links))
+            .force('charge', d3.forceManyBody().strength(-80))
+            .force('center', d3.forceCenter(leftWidth / 2 - 50, rightHeight / 2))
+            .on('end', ticked)
+
+        //Initialize the links
+        const link = graph.selectAll('line')
+            .data(links)
+            .join('line')
+            .attr('id', d => `L${d.source.id}to${d.target.id}`)
+            .style('stroke', '#aaaaaa');
+
+        //Iniitialize the node
+        const node = graph.selectAll('circle')
+            .data(nodes)
+            .join('circle')
+            .attr('r', 8)
+            .attr('id', d => `N${d.id}`)
+            .style('fill', '#6464cc')
+            .attr('stroke', '#ffffff')
+            .attr('stroke-width', 1)
+            .on('mouseover', mouseoverG)
+            .on('mouseleave', mouseleaveG)
+            .call(drag(simulation));
+
+        //Matrix view
+        const coAuthor = adjacency(nodes, links)
+        //Scale
+        const xScale = d3.scaleBand()
+                        .domain(N)
+                        .range([leftWidth, width - margin.right])
+        const xAxis = rightsvg.append('g')
+            .call(d3.axisTop(xScale).tickFormat(d => nodes.filter(x => x.id===d)[0].fullname))
+            .attr("transform", `translate(0,${margin.top+padding_top})`)
+            .attr('font-size', 7);
+        xAxis.selectAll("text")
+            .style("text-anchor", "start")
+            .attr("dx", "1.4em")
+            .attr("dy", "1.6em")
+            .attr("transform", "rotate(-90)");
+
+        xAxis.selectAll('.domain').remove();
+
+        const yScale = d3.scaleBand()
+                        .domain(N)
+                        .range([padding_top + margin.top, rightHeight - margin.bottom])
+        rightsvg.append('g').call(d3.axisLeft(yScale).tickFormat(d => nodes.filter(x => x.id===d)[0].fullname))
+                            .attr('font-size', 8)
+                            .attr("transform", `translate(${leftWidth},0)`)
+                            .select('.domain').remove();
+
+        const colorScale = d3.scaleSequential().domain(d3.extent(coAuthor, d=>d['co']))
+                                .range(["#dcdfee","#6464cc"])
+        // ["#efedf5","#bcbddc","#756bb1"]
+
+        const highlightScale = d3.scaleSequential().domain(d3.extent(coAuthor, d=>d['co']))
+            .range(["#eeebdc","#f5df58"])
+
+
+        //Adjacency
+        renderMatrix(coAuthor);
+
+        //Mouse over the matrix
+        function mouseoverM(event, d) {
+            d3.select(this).transition().attr('fill', d => highlightScale(d.co));
+            graph.selectAll(`#N${d.source}`).transition().style('fill', '#f5df58');
+            graph.selectAll(`#N${d.target}`).transition().style('fill', '#f5df58');
+            graph.selectAll(`#L${d.source}to${d.target}`).transition()
+                .style('stroke', '#a0a0a0')
+                .attr('stroke-width', 2);
+            graph.selectAll(`#L${d.target}to${d.source}`).transition()
+                .style('stroke', '#a0a0a0')
+                .attr('stroke-width', 2);
+        }
+        function mouseleaveM(event, d){
+            d3.select(this).transition().attr('fill', d => colorScale(d.co));;
+            graph.selectAll(`#N${d.source}`).transition().style('fill', '#6464cc');
+            graph.selectAll(`#N${d.target}`).transition().style('fill', '#6464cc');
+            graph.selectAll(`#L${d.source}to${d.target}`).transition()
+                .style('stroke', '#aaaaaa')
+                .attr('stroke-width', 1);
+            graph.selectAll(`#L${d.target}to${d.source}`).transition()
+                .style('stroke', '#aaaaaa')
+                .attr('stroke-width', 1);
+        }
+
+        //Mouse over graph
+        function mouseoverG(event, d) {
+            d3.select(this).transition().style('fill', '#f5df58');
+            rightsvg.selectAll(`rect.R${d.id}`).transition()
+                .attr('opacity', 0.8)
+                .attr('fill', d => highlightScale(d.co));
+        }
+
+
+        function mouseleaveG(event, d) {
+            d3.select(this).transition().style('fill', '#6464cc');
+            rightsvg.selectAll(`rect.R${d.id}`).transition()
+                .attr('opacity', 1)
+                .attr('fill', d => colorScale(d.co));
+        }
+
+        function ticked() {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+        }
+
+        function drag(simulation) {
+            function dragstarted(event) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+            }
+
+            function dragged(event) {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+            }
+
+            function dragended(event) {
+                if (!event.active) simulation.alphaTarget(0);
+                event.subject.fx = null;
+                event.subject.fy = null;
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        function renderMatrix(dat) {
+            rightsvg.selectAll('rect').data(dat, d=>d.source)
+                .join('rect')
+                .attr('x', d => xScale(d['source']))
+                .attr('y', d => yScale(d['target']))
+                .attr('class', d => `R${d.source} R${d.target}`)
+                .attr('width',xScale.bandwidth())
+                .attr('height',yScale.bandwidth())
+                .attr("stroke", "#ffffff")
+                .attr("stroke-width", 1.2)
+                .attr('fill', d => colorScale(d['co'] === undefined?0:d['co']))
+                .attr('opacity', 1)
+                .on('mouseover', mouseoverM)
+                .on('mouseleave', mouseleaveM);
+        }
+
+
+    });
+
+    //Title
+    d3.select(".legendTitle")
+        .attr("x", leftWidth/2)
+        .attr("y", margin.top/2);
+
+
+</script>
+
+</html>
